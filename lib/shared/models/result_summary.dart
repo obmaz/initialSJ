@@ -4,7 +4,7 @@ class ResultSummary {
   final int finalScore;
   final int stageNumber;
   final RunOutcome outcome;
-  final double distanceReached;
+  final int flagsCollected;
   final int coinsAwarded;
   final bool newBestScore;
   final double clearTimeSeconds;
@@ -14,7 +14,7 @@ class ResultSummary {
     required this.finalScore,
     required this.stageNumber,
     required this.outcome,
-    required this.distanceReached,
+    required this.flagsCollected,
     required this.coinsAwarded,
     this.newBestScore = false,
     this.clearTimeSeconds = 0.0,
@@ -29,7 +29,7 @@ class ResultSummary {
         (e) => e.name == json['outcome'],
         orElse: () => RunOutcome.failed,
       ),
-      distanceReached: (json['distanceReached'] ?? 0.0).toDouble(),
+      flagsCollected: json['flagsCollected'] ?? 0,
       coinsAwarded: json['coinsAwarded'] ?? 0,
       newBestScore: json['newBestScore'] ?? false,
       clearTimeSeconds: (json['clearTimeSeconds'] ?? 0.0).toDouble(),
@@ -42,7 +42,7 @@ class ResultSummary {
       'finalScore': finalScore,
       'stageNumber': stageNumber,
       'outcome': outcome.name,
-      'distanceReached': distanceReached,
+      'flagsCollected': flagsCollected,
       'coinsAwarded': coinsAwarded,
       'newBestScore': newBestScore,
       'clearTimeSeconds': clearTimeSeconds,

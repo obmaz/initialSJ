@@ -2,12 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:initialsj/game/engine/camera_centered_game.dart';
 import 'package:initialsj/game/engine/gameplay_commands.dart';
+import 'package:initialsj/game/engine/racing_game.dart';
 import 'package:initialsj/shared/models/vehicle_spec.dart';
 
-class CameraCenteredPlayer extends SpriteComponent
-    with HasGameReference<CameraCenteredGame> {
+class Player extends SpriteComponent with HasGameReference<RacingGame> {
   static const double collisionWidthFactor = 0.34;
   static const double collisionHeightFactor = 0.5;
   static const double steeringLerpSpeed = 8.0;
@@ -23,7 +22,7 @@ class CameraCenteredPlayer extends SpriteComponent
   static const double analogSteeringAccelerationFactor = 0.9;
   static const int renderPriority = 1000;
 
-  CameraCenteredPlayer({required this.vehicle})
+  Player({required this.vehicle})
     : super(
         size: Vector2.all(64),
         anchor: Anchor.bottomCenter,
@@ -64,6 +63,9 @@ class CameraCenteredPlayer extends SpriteComponent
   @override
   void update(double dt) {
     super.update(dt);
+    if (game.isCountingDown) {
+      return;
+    }
 
     final input = Vector2.zero();
     if (movingLeft) {
@@ -101,8 +103,7 @@ class CameraCenteredPlayer extends SpriteComponent
     final width = game.stage.cellSize * widthToCellFactor;
     collisionSize = Vector2(width, width * _spriteAspectRatio);
     final renderWidth =
-        (game.size.x / CameraCenteredGame.targetVisibleStageCells) *
-        widthToCellFactor;
+        (game.size.x / RacingGame.targetVisibleStageCells) * widthToCellFactor;
     size = Vector2(renderWidth, renderWidth * _spriteAspectRatio);
   }
 
@@ -135,6 +136,9 @@ class CameraCenteredPlayer extends SpriteComponent
       case GameplayCommandType.moveRight:
         movingRight = command.state != CommandState.stop;
         break;
+      case GameplayCommandType.steer:
+        _steeringInput = command.value.clamp(-1.0, 1.0);
+        break;
       case GameplayCommandType.accelerate:
         movingUp = command.state != CommandState.stop;
         break;
@@ -146,14 +150,23 @@ class CameraCenteredPlayer extends SpriteComponent
           applyNitroBurst();
         }
         break;
-      default:
+      case GameplayCommandType.pause:
+      case GameplayCommandType.resume:
         break;
     }
   }
 
+  /// Nitro is capped so repeated bursts cannot ratchet speed up without limit.
+  /// The fuel price and cooldown are enforced by [RacingGame].
   void applyNitroBurst() {
     final direction = _driveDirection();
-    final boostedSpeed = currentSpeed + nitroBoostPerInterval;
+    final boostedSpeed = math.min(
+      currentSpeed + nitroBoostPerInterval,
+      maxSpeed * RacingGame.nitroSpeedCapFactor,
+    );
+    if (boostedSpeed <= currentSpeed) {
+      return;
+    }
     _velocity
       ..setFrom(direction)
       ..scale(boostedSpeed / speedDisplayFactor);
@@ -169,10 +182,6 @@ class CameraCenteredPlayer extends SpriteComponent
     movingUp = false;
     movingDown = false;
     _steeringInput = 0;
-  }
-
-  void setSteeringInput(double value) {
-    _steeringInput = value.clamp(-1.0, 1.0);
   }
 
   void _applyDirectionalAcceleration(Vector2 input, double dt) {
@@ -191,14 +200,7 @@ class CameraCenteredPlayer extends SpriteComponent
 
     _velocity.add(input * vehicle.acceleration * dt);
     _syncCurrentSpeed();
-    final speed = currentSpeed;
-    if (speed > maxSpeed) {
-      final allowedSpeed = previousSpeed > maxSpeed ? previousSpeed : maxSpeed;
-      if (speed > allowedSpeed) {
-        _velocity.scale(allowedSpeed / speed);
-        _syncCurrentSpeed();
-      }
-    }
+    _capSpeed(previousSpeed);
 
     if (_steeringInput != 0) {
       _velocity.x +=
@@ -207,15 +209,19 @@ class CameraCenteredPlayer extends SpriteComponent
           analogSteeringAccelerationFactor *
           dt;
       _syncCurrentSpeed();
-      if (currentSpeed > maxSpeed && previousSpeed <= maxSpeed) {
-        _velocity.scale(maxSpeed / currentSpeed);
-        _syncCurrentSpeed();
-      }
-      if (currentSpeed > previousSpeed && previousSpeed > maxSpeed) {
-        _velocity.scale(previousSpeed / currentSpeed);
-        _syncCurrentSpeed();
-      }
+      _capSpeed(previousSpeed);
     }
+  }
+
+  /// Clamps back to the vehicle's top speed, while letting an existing
+  /// over-speed state (a nitro burst) decay instead of being cut off.
+  void _capSpeed(double previousSpeed) {
+    final allowedSpeed = math.max(maxSpeed, previousSpeed);
+    if (currentSpeed <= allowedSpeed) {
+      return;
+    }
+    _velocity.scale(allowedSpeed / currentSpeed);
+    _syncCurrentSpeed();
   }
 
   void _applyIdleDrag(double dt) {

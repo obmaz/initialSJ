@@ -103,6 +103,16 @@ class StageLayout {
         '1$_gameplayBackgroundSuffix';
   }
 
+  /// Same asset as [gameplayBackgroundAssetForStage], but relative to the
+  /// `assets/images/` root that Flame's [Sprite.load] resolves against.
+  static String gameplayBackgroundSpriteForStage(int stageNumber) {
+    const imagesRoot = 'assets/images/';
+    final path = gameplayBackgroundAssetForStage(stageNumber);
+    return path.startsWith(imagesRoot)
+        ? path.substring(imagesRoot.length)
+        : path;
+  }
+
   static int resolveStageNumber(int stageNumber) {
     if (_availableStageNumbers.isEmpty) {
       return 1;

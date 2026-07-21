@@ -1,4 +1,4 @@
-enum RunStatus { ready, running, paused, cleared, failed, exited }
+enum RunStatus { ready, running, cleared, failed }
 
 class StageRun {
   final int livesRemaining;
@@ -14,8 +14,11 @@ class StageRun {
   final int totalFlags;
   final double currentSpeed;
   final double fuelRemaining;
-  final Offset2 playerPosition;
   final double elapsedTime;
+
+  /// Seconds left on the pre-race countdown. Zero once the race is live.
+  final double countdownRemaining;
+  final bool nitroReady;
   final int collisionCount;
   final int chasersNearby;
 
@@ -33,8 +36,9 @@ class StageRun {
     this.totalFlags = 0,
     this.currentSpeed = 0.0,
     this.fuelRemaining = 1.0,
-    this.playerPosition = const Offset2.zero(),
     this.elapsedTime = 0.0,
+    this.countdownRemaining = 0.0,
+    this.nitroReady = true,
     this.collisionCount = 0,
     this.chasersNearby = 0,
   });
@@ -51,8 +55,9 @@ class StageRun {
     int? totalFlags,
     double? currentSpeed,
     double? fuelRemaining,
-    Offset2? playerPosition,
     double? elapsedTime,
+    double? countdownRemaining,
+    bool? nitroReady,
     int? collisionCount,
     int? chasersNearby,
   }) {
@@ -70,19 +75,11 @@ class StageRun {
       totalFlags: totalFlags ?? this.totalFlags,
       currentSpeed: currentSpeed ?? this.currentSpeed,
       fuelRemaining: fuelRemaining ?? this.fuelRemaining,
-      playerPosition: playerPosition ?? this.playerPosition,
       elapsedTime: elapsedTime ?? this.elapsedTime,
+      countdownRemaining: countdownRemaining ?? this.countdownRemaining,
+      nitroReady: nitroReady ?? this.nitroReady,
       collisionCount: collisionCount ?? this.collisionCount,
       chasersNearby: chasersNearby ?? this.chasersNearby,
     );
   }
-}
-
-class Offset2 {
-  final double x;
-  final double y;
-
-  const Offset2(this.x, this.y);
-
-  const Offset2.zero() : x = 0.0, y = 0.0;
 }

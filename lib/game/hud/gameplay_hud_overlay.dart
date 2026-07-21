@@ -1,12 +1,10 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
-import 'package:initialsj/game/engine/camera_centered_game.dart';
+import 'package:initialsj/game/engine/racing_game.dart';
 import 'package:initialsj/game/engine/game_session_controller.dart';
 import 'package:initialsj/shared/models/stage_run.dart';
 
 class GameplayHudOverlay extends StatelessWidget {
-  static const double _countdownSeconds = 3.0;
-
   final GameSessionController sessionController;
   final FlameGame game;
 
@@ -23,8 +21,8 @@ class GameplayHudOverlay extends StatelessWidget {
       builder: (context, snapshot) {
         final run = snapshot.data;
         if (run == null) return const SizedBox.shrink();
-        final countdownValue = (_countdownSeconds - run.elapsedTime).ceil();
-        final showCountdown = run.elapsedTime < _countdownSeconds;
+        final countdownValue = run.countdownRemaining.ceil();
+        final showCountdown = run.countdownRemaining > 0;
         final speedValue = run.currentSpeed.round();
         final fuelPercent = (run.fuelRemaining * 100).round();
         final fuelColor = run.fuelRemaining > 0.5
@@ -32,9 +30,7 @@ class GameplayHudOverlay extends StatelessWidget {
             : run.fuelRemaining > 0.25
             ? Colors.orange
             : const Color(0xFFFF5A5A);
-        final cameraGame = game is CameraCenteredGame
-            ? game as CameraCenteredGame
-            : null;
+        final racingGame = game is RacingGame ? game as RacingGame : null;
 
         return Stack(
           children: [
@@ -51,13 +47,15 @@ class GameplayHudOverlay extends StatelessWidget {
                       speedValue: speedValue,
                       fuelColor: fuelColor,
                     ),
-                    if (cameraGame != null) ...[
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.topRight,
-                        child: _MiniMapPanel(game: cameraGame),
-                      ),
-                    ],
+                    const SizedBox(height: 6),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _PauseButton(onPressed: sessionController.pause),
+                        const Spacer(),
+                        if (racingGame != null) _MiniMapPanel(game: racingGame),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -175,10 +173,40 @@ class _TopHudPanel extends StatelessWidget {
   }
 }
 
+/// Entry point into [PauseOverlay]. Without it nothing in the app ever emitted
+/// a pause command, leaving the whole pause flow unreachable.
+class _PauseButton extends StatelessWidget {
+  const _PauseButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Pause',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onPressed,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: const Color(0xCC061013),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: const Icon(Icons.pause, color: Colors.white, size: 22),
+        ),
+      ),
+    );
+  }
+}
+
 class _MiniMapPanel extends StatelessWidget {
   const _MiniMapPanel({required this.game});
 
-  final CameraCenteredGame game;
+  final RacingGame game;
 
   @override
   Widget build(BuildContext context) {
@@ -421,7 +449,7 @@ class _LivesStat extends StatelessWidget {
 class _MiniMapPainter extends CustomPainter {
   const _MiniMapPainter({required this.game});
 
-  final CameraCenteredGame game;
+  final RacingGame game;
 
   @override
   void paint(Canvas canvas, Size size) {

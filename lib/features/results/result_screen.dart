@@ -19,12 +19,13 @@ class ResultScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppStateController>();
-    final summary = appState.latestResult ??
+    final summary =
+        appState.latestResult ??
         ResultSummary(
           finalScore: 0,
           stageNumber: appState.activeRun?.stageNumber ?? 1,
           outcome: RunOutcome.failed,
-          distanceReached: 0,
+          flagsCollected: 0,
           coinsAwarded: 0,
         );
 

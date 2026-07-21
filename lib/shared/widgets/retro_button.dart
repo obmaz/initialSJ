@@ -27,9 +27,7 @@ class RetroButton extends StatelessWidget {
           // User preference: No hover or focus effects
           splashFactory: NoSplash.splashFactory,
           shadowColor: Colors.transparent,
-        ).copyWith(
-          overlayColor: WidgetStateProperty.all(Colors.transparent),
-        ),
+        ).copyWith(overlayColor: WidgetStateProperty.all(Colors.transparent)),
         onPressed: onPressed,
         child: Text(
           text,

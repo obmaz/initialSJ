@@ -108,6 +108,10 @@ class AppStateController extends ChangeNotifier {
       ...VehicleCatalog.defaultOwnedVehicleIds(),
       ...profile.ownedVehicleIds,
     }.toList();
+    if (owned.isEmpty) {
+      // A catalog with nothing marked startsUnlocked must not brick startup.
+      owned.add(VehicleCatalog.starterId);
+    }
     final selected = owned.contains(profile.selectedVehicleId)
         ? profile.selectedVehicleId
         : owned.first;

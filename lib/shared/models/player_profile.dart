@@ -25,17 +25,34 @@ class PlayerProfile {
         ?.map((e) => e.toString())
         .toList();
     final selectedVehicleId =
-        (json['selectedVehicleId'] as String?) ?? VehicleCatalog.starterId;
+        json['selectedVehicleId']?.toString() ?? VehicleCatalog.starterId;
 
     return PlayerProfile(
-      playerId: json['playerId'],
-      displayName: json['displayName'] ?? 'Player 1',
-      coinBalance: json['coinBalance'] ?? 0,
-      level: json['level'] ?? 1,
-      bestScore: json['bestScore'] ?? 0,
+      playerId:
+          json['playerId']?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      displayName: json['displayName']?.toString() ?? 'Player 1',
+      coinBalance: _asInt(json['coinBalance']),
+      level: _asInt(json['level'], fallback: 1),
+      bestScore: _asInt(json['bestScore']),
       ownedVehicleIds: ownedVehicleIds,
       selectedVehicleId: selectedVehicleId,
     );
+  }
+
+  /// Tolerates numbers that round-tripped through JSON as doubles or strings,
+  /// so one odd field cannot throw away the whole profile.
+  static int _asInt(Object? value, {int fallback = 0}) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value) ?? fallback;
+    }
+    return fallback;
   }
 
   Map<String, dynamic> toJson() {

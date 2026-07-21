@@ -2,11 +2,10 @@ import 'dart:math' as math;
 
 import 'package:flame/components.dart';
 import 'package:flutter/material.dart';
-import 'package:initialsj/game/engine/camera_centered_game.dart';
+import 'package:initialsj/game/engine/racing_game.dart';
 
-class CameraCenteredChaser extends SpriteComponent
-    with HasGameReference<CameraCenteredGame> {
-  CameraCenteredChaser(this.spawnPoint)
+class Chaser extends SpriteComponent with HasGameReference<RacingGame> {
+  Chaser(this.spawnPoint)
     : worldPosition = spawnPoint.clone(),
       super(size: Vector2.all(64), anchor: Anchor.center);
 
@@ -17,6 +16,9 @@ class CameraCenteredChaser extends SpriteComponent
   static const double collisionWidthFactor = 0.45;
   static const double collisionHeightFactor = 0.62;
   static const double baseRenderWidthFactor = 0.18;
+
+  /// Parked well outside the viewport when the chaser is too far to be drawn.
+  static const double _offscreenPosition = -10000;
 
   final Vector2 spawnPoint;
   Vector2 worldPosition;
@@ -32,18 +34,22 @@ class CameraCenteredChaser extends SpriteComponent
   @override
   void update(double dt) {
     super.update(dt);
-
     syncSizeToStage();
-    final toPlayer = game.playerWorldPosition - worldPosition;
-    if (toPlayer.length2 > 0) {
-      final direction = toPlayer.normalized();
-      _moveAlongAxis(Vector2(direction.x * moveSpeed * dt, 0));
-      _moveAlongAxis(Vector2(0, direction.y * moveSpeed * dt));
-      _updateRotation(direction, dt);
+
+    // Chasers hold position during the countdown, but still have to be placed
+    // on screen or they would render at the world origin.
+    if (!game.isCountingDown) {
+      final toPlayer = game.playerWorldPosition - worldPosition;
+      if (toPlayer.length2 > 0) {
+        final direction = toPlayer.normalized();
+        _moveAlongAxis(Vector2(direction.x * moveSpeed * dt, 0));
+        _moveAlongAxis(Vector2(0, direction.y * moveSpeed * dt));
+        _updateRotation(direction, dt);
+      }
     }
 
     if (!game.isWithinPseudoView(worldPosition.y)) {
-      position = Vector2(-10000, -10000);
+      position = Vector2(_offscreenPosition, _offscreenPosition);
       return;
     }
 

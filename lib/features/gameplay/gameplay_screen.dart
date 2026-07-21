@@ -6,11 +6,11 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:initialsj/app/router/app_router.dart';
 import 'package:initialsj/features/gameplay/widgets/pause_overlay.dart';
-import 'package:initialsj/game/engine/camera_centered_game.dart';
-import 'package:initialsj/game/engine/game_session_controller.dart';
-import 'package:initialsj/game/hud/gameplay_hud_overlay.dart';
 import 'package:initialsj/game/engine/gameplay_commands.dart';
-import 'package:initialsj/game/world/stage_layout.dart';
+import 'package:initialsj/game/engine/game_session_controller.dart';
+import 'package:initialsj/game/engine/racing_game.dart';
+import 'package:initialsj/game/engine/run_scoring.dart';
+import 'package:initialsj/game/hud/gameplay_hud_overlay.dart';
 import 'package:initialsj/shared/models/result_summary.dart';
 import 'package:initialsj/shared/models/stage_run.dart';
 import 'package:initialsj/shared/state/app_state_controller.dart';
@@ -24,35 +24,27 @@ class GameplayScreen extends StatefulWidget {
 
 class _GameplayScreenState extends State<GameplayScreen> {
   late final GameSessionController _sessionController;
-  late final CameraCenteredGame _game;
+  late final RacingGame _game;
   final ValueNotifier<StageRun?> _runNotifier = ValueNotifier<StageRun?>(null);
   bool _isPaused = false;
+  StreamSubscription<GameplayCommand>? _commandSubscription;
   StreamSubscription<StageRun>? _stateSubscription;
   StreamSubscription<RunOutcome>? _outcomeSubscription;
   int _joystickHorizontal = 0;
   double _joystickSteering = 0.0;
-
-  void _releaseGameplayInputs() {
-    _updateJoystickDirection(0, 0);
-    _updateJoystickSteering(0);
-    _sessionController.accelerate(CommandState.stop);
-    _sessionController.brake(CommandState.stop);
-    _sessionController.moveLeft(CommandState.stop);
-    _sessionController.moveRight(CommandState.stop);
-  }
 
   @override
   void initState() {
     super.initState();
     _sessionController = GameSessionController();
     final appState = context.read<AppStateController>();
-    _game = CameraCenteredGame(
+    _game = RacingGame(
       sessionController: _sessionController,
       stageNumber: appState.activeRun?.stageNumber ?? 1,
       vehicle: appState.selectedVehicle,
     );
 
-    _sessionController.commandStream.listen((command) {
+    _commandSubscription = _sessionController.commandStream.listen((command) {
       if (command.type == GameplayCommandType.pause) {
         setState(() => _isPaused = true);
         _game.pauseEngine();
@@ -70,29 +62,35 @@ class _GameplayScreenState extends State<GameplayScreen> {
       context.read<AppStateController>().updateActiveRun(runState);
     });
 
-    _outcomeSubscription = _sessionController.outcomeStream.listen((outcome) {
-      if (!mounted) {
-        return;
-      }
-      final appState = context.read<AppStateController>();
-      final run = appState.activeRun;
-      if (run == null) {
-        return;
-      }
+    _outcomeSubscription = _sessionController.outcomeStream.listen(
+      _handleOutcome,
+    );
+  }
 
-      final summary = ResultSummary(
-        finalScore: run.score,
-        stageNumber: run.stageNumber,
-        outcome: outcome,
-        distanceReached: run.flagsCollected.toDouble(),
-        coinsAwarded: run.flagsCollected * 100,
-        newBestScore: run.score > appState.profile.bestScore,
-        clearTimeSeconds: run.elapsedTime,
-        lapsCompleted: run.currentLap > run.totalLaps
-            ? run.totalLaps
-            : run.currentLap,
-      );
+  void _handleOutcome(RunOutcome outcome) {
+    if (!mounted) {
+      return;
+    }
+    final appState = context.read<AppStateController>();
+    final run = appState.activeRun;
 
+    final score = run?.score ?? 0;
+    final summary = ResultSummary(
+      finalScore: score,
+      stageNumber: run?.stageNumber ?? _game.stageNumber,
+      outcome: outcome,
+      flagsCollected: run?.flagsCollected ?? 0,
+      coinsAwarded: RunScoring.coinsFor(score: score, outcome: outcome),
+      newBestScore: score > appState.profile.bestScore,
+      clearTimeSeconds: run?.elapsedTime ?? 0,
+      lapsCompleted: run == null
+          ? 0
+          : run.currentLap > run.totalLaps
+          ? run.totalLaps
+          : run.currentLap,
+    );
+
+    if (run != null) {
       appState.updateActiveRun(
         run.copyWith(
           status: outcome == RunOutcome.cleared
@@ -100,18 +98,33 @@ class _GameplayScreenState extends State<GameplayScreen> {
               : RunStatus.failed,
         ),
       );
-      appState.setLatestResult(summary);
-      unawaited(appState.checkNewBestScore(summary.finalScore));
-      unawaited(appState.addCoins(summary.coinsAwarded));
-      context.go(AppRouter.resultPath);
-    });
+    }
+    appState.setLatestResult(summary);
+    unawaited(appState.checkNewBestScore(summary.finalScore));
+    unawaited(appState.addCoins(summary.coinsAwarded));
+    context.go(AppRouter.resultPath);
+  }
+
+  void _releaseGameplayInputs() {
+    _updateJoystickDirection(0, 0);
+    _updateJoystickSteering(0);
+    _sessionController.accelerate(CommandState.stop);
+    _sessionController.brake(CommandState.stop);
+    _sessionController.moveLeft(CommandState.stop);
+    _sessionController.moveRight(CommandState.stop);
+  }
+
+  @override
+  void deactivate() {
+    _releaseGameplayInputs();
+    super.deactivate();
   }
 
   @override
   void dispose() {
+    _commandSubscription?.cancel();
     _stateSubscription?.cancel();
     _outcomeSubscription?.cancel();
-    _releaseGameplayInputs();
     _sessionController.dispose();
     _runNotifier.dispose();
     super.dispose();
@@ -135,14 +148,11 @@ class _GameplayScreenState extends State<GameplayScreen> {
         backgroundColor: Colors.black,
         body: Stack(
           children: [
-            // Main Gameplay Area (Flame Game)
+            // Main gameplay area. The stage backdrop is drawn by the engine
+            // itself, so no Flutter background builder is needed here.
             Positioned.fill(
               child: GameWidget(
                 game: _game,
-                backgroundBuilder: (_) => _GameplayParallaxBackground(
-                  game: _game,
-                  runListenable: _runNotifier,
-                ),
                 overlayBuilderMap: {
                   'hud': (context, game) => GameplayHudOverlay(
                     sessionController: _sessionController,
@@ -153,7 +163,7 @@ class _GameplayScreenState extends State<GameplayScreen> {
               ),
             ),
 
-            // Touch Controls (Bottom Area)
+            // Touch controls (bottom area)
             Positioned(
               left: 0,
               right: 0,
@@ -162,7 +172,7 @@ class _GameplayScreenState extends State<GameplayScreen> {
               child: SafeArea(top: false, child: _buildControls(context)),
             ),
 
-            // Pause Overlay
+            // Pause overlay
             if (_isPaused)
               Positioned.fill(
                 child: PauseOverlay(sessionController: _sessionController),
@@ -184,22 +194,31 @@ class _GameplayScreenState extends State<GameplayScreen> {
           SizedBox(
             width: 92,
             height: 92,
-            child: _NitroButton(
-              onPressed: () => _sessionController.nitro(CommandState.start),
-              onReleased: () {},
+            child: ValueListenableBuilder<StageRun?>(
+              valueListenable: _runNotifier,
+              builder: (context, run, _) => _ActionButton(
+                assetPath: 'assets/images/ui/nitro_button.webp',
+                enabled: run?.nitroReady ?? true,
+                onPressed: () => _sessionController.nitro(CommandState.start),
+              ),
             ),
           ),
           const SizedBox(width: 6),
           SizedBox(
             width: 92,
             height: 92,
-            child: _SkillButton(onPressed: () {}, onReleased: () {}),
+            child: _ActionButton(
+              assetPath: 'assets/images/ui/skill_button.webp',
+              label: 'BRAKE',
+              onPressed: () => _sessionController.brake(CommandState.start),
+              onReleased: () => _sessionController.brake(CommandState.stop),
+            ),
           ),
           const SizedBox(width: 6),
           Expanded(
             child: Align(
               alignment: const Alignment(-0.35, 0),
-              child: _JoystickPanel(
+              child: _VirtualJoystick(
                 onDirectionChanged: _updateJoystickDirection,
                 onSteeringChanged: _updateJoystickSteering,
                 onTouchActiveChanged: (active) {
@@ -216,20 +235,22 @@ class _GameplayScreenState extends State<GameplayScreen> {
   }
 
   void _updateJoystickDirection(int horizontal, int vertical) {
-    if (_joystickHorizontal != horizontal) {
-      if (_joystickHorizontal == -1) {
-        _sessionController.moveLeft(CommandState.stop);
-      } else if (_joystickHorizontal == 1) {
-        _sessionController.moveRight(CommandState.stop);
-      }
+    if (_joystickHorizontal == horizontal) {
+      return;
+    }
 
-      _joystickHorizontal = horizontal;
+    if (_joystickHorizontal == -1) {
+      _sessionController.moveLeft(CommandState.stop);
+    } else if (_joystickHorizontal == 1) {
+      _sessionController.moveRight(CommandState.stop);
+    }
 
-      if (_joystickHorizontal == -1) {
-        _sessionController.moveLeft(CommandState.start);
-      } else if (_joystickHorizontal == 1) {
-        _sessionController.moveRight(CommandState.start);
-      }
+    _joystickHorizontal = horizontal;
+
+    if (_joystickHorizontal == -1) {
+      _sessionController.moveLeft(CommandState.start);
+    } else if (_joystickHorizontal == 1) {
+      _sessionController.moveRight(CommandState.start);
     }
   }
 
@@ -238,167 +259,9 @@ class _GameplayScreenState extends State<GameplayScreen> {
       return;
     }
     _joystickSteering = steering;
-    _game.player.setSteeringInput(steering);
-  }
-
-  @override
-  void deactivate() {
-    _releaseGameplayInputs();
-    super.deactivate();
-  }
-}
-
-class _GameplayParallaxBackground extends StatefulWidget {
-  const _GameplayParallaxBackground({
-    required this.game,
-    required this.runListenable,
-  });
-
-  final CameraCenteredGame game;
-  final ValueNotifier<StageRun?> runListenable;
-
-  @override
-  State<_GameplayParallaxBackground> createState() =>
-      _GameplayParallaxBackgroundState();
-}
-
-class _GameplayParallaxBackgroundState
-    extends State<_GameplayParallaxBackground>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _parallaxTicker;
-
-  @override
-  void initState() {
-    super.initState();
-    _parallaxTicker = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 1),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _parallaxTicker.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge([_parallaxTicker, widget.runListenable]),
-      builder: (context, child) {
-        final stageNumber =
-            widget.runListenable.value?.stageNumber ?? widget.game.stageNumber;
-        final backgroundAsset = StageLayout.gameplayBackgroundAssetForStage(
-          stageNumber,
-        );
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final height = constraints.maxHeight;
-            final overscanX = width * 0.10;
-            final overscanY = height * 0.12;
-            final imageWidth = width + (overscanX * 2);
-            final imageHeight = height + (overscanY * 2);
-            final progress = _currentProgress();
-            final roadCurve = _lookaheadRoadCurve();
-            final horizontalShift =
-                (-_laneOffset() * width * 0.055) - (roadCurve * width * 0.12);
-            final verticalShift = (progress - 0.5) * height * 0.10;
-
-            return ClipRect(
-              child: Stack(
-                children: [
-                  Positioned(
-                    left: -overscanX + horizontalShift,
-                    top: -overscanY + verticalShift,
-                    width: imageWidth,
-                    height: imageHeight,
-                    child: Image.asset(
-                      backgroundAsset,
-                      fit: BoxFit.cover,
-                      alignment: Alignment.center,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  double _currentProgress() {
-    if (widget.game.isLoaded) {
-      return widget.game.mapProgress.clamp(0.0, 1.0);
-    }
-    return (widget.runListenable.value?.mapProgress ?? 0.0).clamp(0.0, 1.0);
-  }
-
-  double _laneOffset() {
-    if (!widget.game.isLoaded) {
-      return 0.0;
-    }
-    return widget.game.normalizedPlayerLaneOffset.clamp(-1.0, 1.0);
-  }
-
-  double _lookaheadRoadCurve() {
-    if (!widget.game.isLoaded) {
-      return 0.0;
-    }
-
-    final playerY = widget.game.playerWorldPosition.y;
-    final currentRoadCenter = widget.game.stage.roadCenterRatioForWorldY(
-      playerY,
-    );
-    final distantRoadCenter = widget.game.stage.roadCenterRatioForWorldY(
-      playerY - (widget.game.visibleDepth * 0.7),
-    );
-    return (distantRoadCenter - currentRoadCenter).clamp(-0.5, 0.5);
-  }
-}
-
-class _NitroButton extends StatefulWidget {
-  const _NitroButton({required this.onPressed, required this.onReleased});
-
-  final VoidCallback onPressed;
-  final VoidCallback onReleased;
-
-  @override
-  State<_NitroButton> createState() => _NitroButtonState();
-}
-
-class _NitroButtonState extends State<_NitroButton> {
-  @override
-  Widget build(BuildContext context) {
-    return _ActionButton(
-      assetPath: 'assets/images/ui/nitro_button.webp',
-      onPressed: widget.onPressed,
-      onReleased: widget.onReleased,
-    );
-  }
-}
-
-class _SkillButton extends StatefulWidget {
-  const _SkillButton({required this.onPressed, required this.onReleased});
-
-  final VoidCallback onPressed;
-  final VoidCallback onReleased;
-
-  @override
-  State<_SkillButton> createState() => _SkillButtonState();
-}
-
-class _SkillButtonState extends State<_SkillButton> {
-  @override
-  Widget build(BuildContext context) {
-    return _ActionButton(
-      assetPath: 'assets/images/ui/skill_button.webp',
-      onPressed: widget.onPressed,
-      onReleased: widget.onReleased,
-    );
+    // Routed through the session controller rather than touching the engine
+    // directly, so input sent before the game finishes loading is harmless.
+    _sessionController.steer(steering);
   }
 }
 
@@ -406,12 +269,16 @@ class _ActionButton extends StatefulWidget {
   const _ActionButton({
     required this.assetPath,
     required this.onPressed,
-    required this.onReleased,
+    this.onReleased,
+    this.label,
+    this.enabled = true,
   });
 
   final String assetPath;
   final VoidCallback onPressed;
-  final VoidCallback onReleased;
+  final VoidCallback? onReleased;
+  final String? label;
+  final bool enabled;
 
   @override
   State<_ActionButton> createState() => _ActionButtonState();
@@ -422,11 +289,14 @@ class _ActionButtonState extends State<_ActionButton> {
 
   @override
   Widget build(BuildContext context) {
+    final label = widget.label;
+
     return Listener(
       onPointerDown: (_) {
-        setState(() {
-          _pressed = true;
-        });
+        if (!widget.enabled) {
+          return;
+        }
+        setState(() => _pressed = true);
         widget.onPressed();
       },
       onPointerUp: (_) => _release(),
@@ -436,11 +306,32 @@ class _ActionButtonState extends State<_ActionButton> {
         scale: _pressed ? 0.95 : 1.0,
         child: AnimatedOpacity(
           duration: const Duration(milliseconds: 90),
-          opacity: _pressed ? 0.92 : 1.0,
+          opacity: widget.enabled ? (_pressed ? 0.92 : 1.0) : 0.4,
           child: Stack(
             fit: StackFit.expand,
             alignment: Alignment.center,
-            children: [Image.asset(widget.assetPath)],
+            children: [
+              Image.asset(widget.assetPath),
+              if (label != null)
+                Center(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                      shadows: [
+                        Shadow(
+                          color: Colors.black87,
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       ),
@@ -449,32 +340,9 @@ class _ActionButtonState extends State<_ActionButton> {
 
   void _release() {
     if (_pressed) {
-      setState(() {
-        _pressed = false;
-      });
+      setState(() => _pressed = false);
     }
-    widget.onReleased();
-  }
-}
-
-class _JoystickPanel extends StatelessWidget {
-  const _JoystickPanel({
-    required this.onDirectionChanged,
-    required this.onSteeringChanged,
-    required this.onTouchActiveChanged,
-  });
-
-  final void Function(int horizontal, int vertical) onDirectionChanged;
-  final ValueChanged<double> onSteeringChanged;
-  final ValueChanged<bool> onTouchActiveChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return _VirtualJoystick(
-      onDirectionChanged: onDirectionChanged,
-      onSteeringChanged: onSteeringChanged,
-      onTouchActiveChanged: onTouchActiveChanged,
-    );
+    widget.onReleased?.call();
   }
 }
 
@@ -509,8 +377,12 @@ class _VirtualJoystickState extends State<_VirtualJoystick> {
       height: _baseSize,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onPanStart: _handlePanStart,
-        onPanUpdate: _handlePanUpdate,
+        onTapDown: (details) => _beginTouch(details.localPosition),
+        onTapUp: (_) => _resetStick(),
+        onTapCancel: _resetStick,
+        onPanStart: (details) => _beginTouch(details.localPosition),
+        onPanUpdate: (details) =>
+            _updateFromLocalPosition(details.localPosition),
         onPanEnd: (_) => _resetStick(),
         onPanCancel: _resetStick,
         child: DecoratedBox(
@@ -556,20 +428,18 @@ class _VirtualJoystickState extends State<_VirtualJoystick> {
     );
   }
 
-  void _handlePanStart(DragStartDetails details) {
+  /// A plain tap counts as "hold the throttle", so the player does not have to
+  /// drag before the car will move.
+  void _beginTouch(Offset localPosition) {
     if (!_touchActive) {
       _touchActive = true;
       widget.onTouchActiveChanged(true);
     }
-    _updateFromLocalPosition(details.localPosition);
-  }
-
-  void _handlePanUpdate(DragUpdateDetails details) {
-    _updateFromLocalPosition(details.localPosition);
+    _updateFromLocalPosition(localPosition);
   }
 
   void _updateFromLocalPosition(Offset localPosition) {
-    final center = const Offset(_baseSize / 2, _baseSize / 2);
+    const center = Offset(_baseSize / 2, _baseSize / 2);
     final rawDelta = localPosition - center;
     final delta = Offset(rawDelta.dx.clamp(-_travelRadius, _travelRadius), 0);
 
